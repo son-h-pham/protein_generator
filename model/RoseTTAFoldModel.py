@@ -47,7 +47,7 @@ class RoseTTAFoldModule(nn.Module):
 
     def forward(self, msa_latent, msa_full, seq, xyz, idx,
                 seq1hot=None, t1d=None, t2d=None, xyz_t=None, alpha_t=None,
-                msa_prev=None, pair_prev=None, state_prev=None,
+                msa_prev=None, pair_prev=None, state_prev=None, nc_cycle=False,
                 return_raw=False, return_full=False,
                 use_checkpoint=False, return_infer=False):
         B, N, L = msa_latent.shape[:3]
@@ -62,7 +62,7 @@ class RoseTTAFoldModule(nn.Module):
         #ic(t2d.shape)
 
         idx = idx.long()
-        msa_latent, pair, state = self.latent_emb(msa_latent, seq, idx, seq1hot=seq1hot)
+        msa_latent, pair, state = self.latent_emb(msa_latent, seq, idx, seq1hot=seq1hot,nc_cycle=nc_cycle)
         
         msa_full = self.full_emb(msa_full, seq, idx, seq1hot=seq1hot)
         #
@@ -109,7 +109,7 @@ class RoseTTAFoldModule(nn.Module):
 
         # Predict coordinates from given inputs
         msa, pair, R, T, alpha_s, state = self.simulator(seq, msa_latent, msa_full.type(torch.float32), pair, xyz[:,:,:3],
-                                                         state, idx, use_checkpoint=use_checkpoint)
+                                                         state, idx, use_checkpoint=use_checkpoint,nc_cycle=nc_cycle)
         
         if return_raw:
             # get last structure
