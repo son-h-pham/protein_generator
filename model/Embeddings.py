@@ -21,10 +21,12 @@ class PositionalEncoding2D(nn.Module):
         self.emb = nn.Embedding(self.nbin, d_model)
         self.drop = nn.Dropout(p_drop)
     
-    def forward(self, x, idx):
+    def forward(self, x, idx, nc_cycle=False):
         bins = torch.arange(self.minpos, self.maxpos, device=x.device)
         seqsep = idx[:,None,:] - idx[:,:,None] # (B, L, L)
         #
+        if nc_cycle:
+            seqsep[0] = (seqsep[0] + L//2)%L - L//2
         ib = torch.bucketize(seqsep, bins).long() # (B, L, L)
         emb = self.emb(ib) #(B, L, L, d_model)
         x = x + emb # add relative positional encoding
@@ -54,7 +56,7 @@ class MSA_emb(nn.Module):
 
         nn.init.zeros_(self.emb.bias)
 
-    def forward(self, msa, seq, idx, seq1hot=None):
+    def forward(self, msa, seq, idx, seq1hot=None, nc_cycle=None):
         # Inputs:
         #   - msa: Input MSA (B, N, L, d_init)
         #   - seq: Input Sequence (B, L)
@@ -82,7 +84,7 @@ class MSA_emb(nn.Module):
         #ic(torch.norm(self.emb_left.weight, dim=1))
         #ic(torch.norm(self.emb_right.weight, dim=1))
         pair = left + right # (B, L, L, d_pair)
-        pair = self.pos(pair, idx) # add relative position
+        pair = self.pos(pair, idx,nc_cycle=None) # add relative position
 
         # state embedding
         state = self.drop(self.emb_state(seq))
