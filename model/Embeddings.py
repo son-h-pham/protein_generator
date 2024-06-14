@@ -25,6 +25,7 @@ class PositionalEncoding2D(nn.Module):
         bins = torch.arange(self.minpos, self.maxpos, device=x.device)
         seqsep = idx[:,None,:] - idx[:,:,None] # (B, L, L)
         #
+        B, L = idx.shape[:2]
         if nc_cycle:
             seqsep[0] = (seqsep[0] + L//2)%L - L//2
         ib = torch.bucketize(seqsep, bins).long() # (B, L, L)
