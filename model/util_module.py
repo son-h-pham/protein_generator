@@ -91,7 +91,7 @@ def rbf(D):
     RBF = torch.exp(-((D_expand - D_mu) / D_sigma)**2)
     return RBF
 
-def get_seqsep(idx):
+def get_seqsep(idx,nc_cycle=False):
     '''
     Input:
         - idx: residue indices of given sequence (B,L)
@@ -100,6 +100,8 @@ def get_seqsep(idx):
                   Sergey found that having sign in seqsep features helps a little
     '''
     seqsep = idx[:,None,:] - idx[:,:,None]
+    if nc_cycle:
+        seqsep = (seqsep+L//2)%L-L//2
     sign = torch.sign(seqsep)
     neigh = torch.abs(seqsep)
     neigh[neigh > 1] = 0.0 # if bonded -- 1.0 / else 0.0
