@@ -7,6 +7,7 @@ from util import cross_product_matrix
 from util_module import *
 from Attention_module import *
 from SE3_network import SE3TransformerWrapper
+from Embeddings import PositionalEncoding2D
 from icecream import ic
 
 # Components for three-track blocks
@@ -14,6 +15,37 @@ from icecream import ic
 # 2. Pair -> Pair update (biased attention. bias from structure)
 # 3. MSA -> Pair update (extract coevolution signal)
 # 4. Str -> Str update (node from MSA, edge from Pair)
+
+class SeqSep(nn.Module):
+    # Add relative positional encoding to pair features
+    def __init__(self, d_model, minpos=-32, maxpos=32):
+        super(SeqSep, self).__init__()
+        self.minpos = minpos
+        self.maxpos = maxpos
+        self.nbin = abs(minpos)+maxpos+1
+        self.emb = nn.Embedding(self.nbin, d_model)
+        self.drop = nn.Dropout(p_drop)
+        
+    def forward(self, idx, idx2=None, oligo=1, L=0, nc_cycle=False):
+        if idx2 is None:
+            idx2 = idx
+
+        B, L1 = idx.shape[:2]
+        L2 = idx2.shape[1]
+        if L==0:
+            L = L1
+
+        bins = torch.arange(self.minpos, self.maxpos, device=idx.device)
+        seqsep = torch.full((oligo,L1,L2), 100, dtype=idx.dtype, device=idx.device)
+        seqsep[0] = idx2[:,None,:] - idx[:,:,None] # (B, L, L)
+        if nc_cycle:
+            seqsep[0] = (seqsep[0]+L//2)%L-L//2
+
+        #
+        ib = torch.bucketize(seqsep, bins).long() # (B, L, L)
+        emb = self.emb(ib) #(B, L, L, d_model)
+        return self.drop(emb)
+
 
 # Update MSA with biased self-attention. bias from Pair & Str
 class MSAPairStr2MSA(nn.Module):
@@ -241,7 +273,7 @@ class Str2Str(nn.Module):
         nn.init.zeros_(self.embed_e2.bias)
     
     @torch.cuda.amp.autocast(enabled=False)
-    def forward(self, msa, pair, R_in, T_in, xyz, state, idx, top_k=64, eps=1e-5):
+    def forward(self, msa, pair, R_in, T_in, xyz, state, idx, top_k=64, eps=1e-5,nc_cycle=False):
         B, N, L = msa.shape[:3]
         
         state = state.type(torch.float32)
@@ -269,7 +301,7 @@ class Str2Str(nn.Module):
         node = self.norm_node(self.embed_x(node))
         pair = self.norm_edge1(self.embed_e1(pair))
         
-        neighbor = get_seqsep(idx)
+        neighbor = get_seqsep(idx,nc_cycle)
         rbf_feat = rbf(torch.cdist(xyz[:,:,1], xyz[:,:,1]))
         pair = torch.cat((pair, rbf_feat, neighbor), dim=-1)
         pair = self.norm_edge2(self.embed_e2(pair))
@@ -330,7 +362,7 @@ class IterBlock(nn.Module):
         super(IterBlock, self).__init__()
         if d_hidden_msa == None:
             d_hidden_msa = d_hidden
-
+        self.pos = SeqSep(d_rbf)
         self.msa2msa = MSAPairStr2MSA(d_msa=d_msa, d_pair=d_pair,
                                       n_head=n_head_msa,
                                       d_state=SE3_param['l0_out_features'],
@@ -346,18 +378,18 @@ class IterBlock(nn.Module):
                                SE3_param=SE3_param,
                                p_drop=p_drop)
 
-    def forward(self, msa, pair, R_in, T_in, xyz, state, idx, use_checkpoint=False):
-        rbf_feat = rbf(torch.cdist(xyz[:,:,1,:], xyz[:,:,1,:]))
+    def forward(self, msa, pair, R_in, T_in, xyz, state, idx, use_checkpoint=False, nc_cycle=False):
+        rbf_feat = rbf(torch.cdist(xyz[:,:,1,:], xyz[:,:,1,:]))+self.pos(idx, idx, B, L, nc_cycle)
         if use_checkpoint:
             msa = checkpoint.checkpoint(create_custom_forward(self.msa2msa), msa, pair, rbf_feat, state)
             pair = checkpoint.checkpoint(create_custom_forward(self.msa2pair), msa, pair)
             pair = checkpoint.checkpoint(create_custom_forward(self.pair2pair), pair, rbf_feat)
-            R, T, state, alpha = checkpoint.checkpoint(create_custom_forward(self.str2str, top_k=0), msa, pair, R_in, T_in, xyz, state, idx)
+            R, T, state, alpha = checkpoint.checkpoint(create_custom_forward(self.str2str, top_k=0,nc_cycle=nc_cycle), msa, pair, R_in, T_in, xyz, state, idx)
         else:
             msa = self.msa2msa(msa, pair, rbf_feat, state)
             pair = self.msa2pair(msa, pair)
             pair = self.pair2pair(pair, rbf_feat)
-            R, T, state, alpha = self.str2str(msa, pair, R_in, T_in, xyz, state, idx, top_k=0) 
+            R, T, state, alpha = self.str2str(msa, pair, R_in, T_in, xyz, state, idx, top_k=0,nc_cycle=nc_cycle) 
         
         return msa, pair, R, T, state, alpha
 
@@ -412,7 +444,7 @@ class IterativeSimulator(nn.Module):
         self.proj_state2 = init_lecun_normal(self.proj_state2)
         nn.init.zeros_(self.proj_state2.bias)
 
-    def forward(self, seq, msa, msa_full, pair, xyz_in, state, idx, use_checkpoint=False):
+    def forward(self, seq, msa, msa_full, pair, xyz_in, state, idx, use_checkpoint=False,nc_cycle=False):
         # input:
         #   seq: query sequence (B, L)
         #   msa: seed MSA embeddings (B, N, L, d_msa)
@@ -441,7 +473,7 @@ class IterativeSimulator(nn.Module):
 
             msa_full, pair, R_in, T_in, state, alpha = self.extra_block[i_m](msa_full, pair,
                                                                              R_in, T_in, xyz, state, idx,
-                                                                             use_checkpoint=use_checkpoint)
+                                                                             use_checkpoint=use_checkpoint,nc_cycle=nc_cycle)
             R_s.append(R_in)
             T_s.append(T_in)
             alpha_s.append(alpha)
@@ -454,7 +486,7 @@ class IterativeSimulator(nn.Module):
             
             msa, pair, R_in, T_in, state, alpha = self.main_block[i_m](msa, pair,
                                                                 R_in, T_in, xyz, state, idx,
-                                                                use_checkpoint=use_checkpoint)
+                                                                use_checkpoint=use_checkpoint,nc_cycle=nc_cycle)
             R_s.append(R_in)
             T_s.append(T_in)
             alpha_s.append(alpha)
@@ -464,7 +496,7 @@ class IterativeSimulator(nn.Module):
             R_in = R_in.detach()
             T_in = T_in.detach()
             xyz = einsum('bnij,bnaj->bnai', R_in, xyz_in) + T_in.unsqueeze(-2)
-            R_in, T_in, state, alpha = self.str_refiner(msa, pair, R_in, T_in, xyz, state, idx, top_k=64)
+            R_in, T_in, state, alpha = self.str_refiner(msa, pair, R_in, T_in, xyz, state, idx, top_k=64,nc_cycle=nc_cycle)
             R_s.append(R_in)
             T_s.append(T_in)
             alpha_s.append(alpha)
