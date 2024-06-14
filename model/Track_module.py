@@ -7,7 +7,6 @@ from util import cross_product_matrix
 from util_module import *
 from Attention_module import *
 from SE3_network import SE3TransformerWrapper
-from Embeddings import PositionalEncoding2D
 from icecream import ic
 
 # Components for three-track blocks
