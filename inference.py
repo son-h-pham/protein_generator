@@ -157,7 +157,7 @@ def get_args():
     parser.add_argument('--sample_distribution_gmm_variances', default=[1.0, 1.0], nargs='+',
         help='sample distribution variances for q_sample()')
 
-    parser.add_argument("-cyclize", default=False, help="Model as N-C cyclized peptide", action='store_true')
+    parser.add_argument("--cyclize", default=False, help="Model as N-C cyclized peptide", action='store_true')
 
 
     return parser.parse_args()
