@@ -353,7 +353,7 @@ class Str2Str(nn.Module):
         return Ri, Ti, state, alpha
 
 class IterBlock(nn.Module):
-    def __init__(self, d_msa=256, d_pair=128,d_rbf=36
+    def __init__(self, d_msa=256, d_pair=128,d_rbf=36,
                  n_head_msa=8, n_head_pair=4,
                  use_global_attn=False,
                  d_hidden=32, d_hidden_msa=None, p_drop=0.15,
