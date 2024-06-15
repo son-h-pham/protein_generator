@@ -25,25 +25,17 @@ class SeqSep(nn.Module):
         self.emb = nn.Embedding(self.nbin, d_model)
         self.drop = nn.Dropout(p_drop)
         
-    def forward(self, idx, idx2=None, oligo=1, L=0, nc_cycle=False):
-        if idx2 is None:
-            idx2 = idx
-
-        B, L1 = idx.shape[:2]
-        L2 = idx2.shape[1]
-        if L==0:
-            L = L1
-
-        bins = torch.arange(self.minpos, self.maxpos, device=idx.device)
-        seqsep = torch.full((oligo,L1,L2), 100, dtype=idx.dtype, device=idx.device)
-        seqsep[0] = idx2[:,None,:] - idx[:,:,None] # (B, L, L)
-        if nc_cycle:
-            seqsep[0] = (seqsep[0]+L//2)%L-L//2
-
+    def forward(self, x, idx, nc_cycle=False):
+        bins = torch.arange(self.minpos, self.maxpos, device=x.device)
+        seqsep = idx[:,None,:] - idx[:,:,None] # (B, L, L)
         #
+        B, L = idx.shape[:2]
+        if nc_cycle:
+            seqsep[0] = (seqsep[0] + L//2)%L - L//2
         ib = torch.bucketize(seqsep, bins).long() # (B, L, L)
         emb = self.emb(ib) #(B, L, L, d_model)
-        return self.drop(emb)
+        x = x + emb # add relative positional encoding
+        return self.drop(x)
 
 
 # Update MSA with biased self-attention. bias from Pair & Str
@@ -361,7 +353,7 @@ class IterBlock(nn.Module):
         super(IterBlock, self).__init__()
         if d_hidden_msa == None:
             d_hidden_msa = d_hidden
-        #self.pos = SeqSep(d_rbf)
+        self.pos = SeqSep(d_pair)
         self.msa2msa = MSAPairStr2MSA(d_msa=d_msa, d_pair=d_pair,
                                       n_head=n_head_msa,
                                       d_state=SE3_param['l0_out_features'],
@@ -378,7 +370,7 @@ class IterBlock(nn.Module):
                                p_drop=p_drop)
 
     def forward(self, msa, pair, R_in, T_in, xyz, state, idx, use_checkpoint=False, nc_cycle=False):
-        rbf_feat = rbf(torch.cdist(xyz[:,:,1,:], xyz[:,:,1,:]))+self.pos(idx, idx, B, L, nc_cycle)
+        rbf_feat = rbf(torch.cdist(xyz[:,:,1,:], xyz[:,:,1,:]))+self.pos(pair, idx, nc_cycle)
         if use_checkpoint:
             msa = checkpoint.checkpoint(create_custom_forward(self.msa2msa), msa, pair, rbf_feat, state)
             pair = checkpoint.checkpoint(create_custom_forward(self.msa2pair), msa, pair)
