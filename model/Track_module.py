@@ -361,7 +361,7 @@ class IterBlock(nn.Module):
         super(IterBlock, self).__init__()
         if d_hidden_msa == None:
             d_hidden_msa = d_hidden
-        self.pos = SeqSep(d_rbf)
+        #self.pos = SeqSep(d_rbf)
         self.msa2msa = MSAPairStr2MSA(d_msa=d_msa, d_pair=d_pair,
                                       n_head=n_head_msa,
                                       d_state=SE3_param['l0_out_features'],
