@@ -17,7 +17,7 @@ from icecream import ic
 
 class SeqSep(nn.Module):
     # Add relative positional encoding to pair features
-    def __init__(self, d_model, minpos=-32, maxpos=32):
+    def __init__(self, d_model, minpos=-32, maxpos=32,p_drop=0.1):
         super(SeqSep, self).__init__()
         self.minpos = minpos
         self.maxpos = maxpos
