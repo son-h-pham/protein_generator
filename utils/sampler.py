@@ -253,7 +253,7 @@ class SEQDIFF_sampler:
 
         # make model and load checkpoint
         print('Loading model checkpoint...')
-        self.model = RoseTTAFoldModule(**self.MODEL_PARAM,nc_cycle=self.args['cyclize']).to(self.DEVICE)
+        self.model = RoseTTAFoldModule(**self.MODEL_PARAM).to(self.DEVICE)
 
         model_state = self.ckpt['model_state_dict']
         self.model.load_state_dict(model_state, strict=False)
