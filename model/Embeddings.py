@@ -85,7 +85,7 @@ class MSA_emb(nn.Module):
         #ic(torch.norm(self.emb_left.weight, dim=1))
         #ic(torch.norm(self.emb_right.weight, dim=1))
         pair = left + right # (B, L, L, d_pair)
-        pair = self.pos(pair, idx,nc_cycle=None) # add relative position
+        pair = self.pos(pair, idx,nc_cycle=nc_cycle) # add relative position
 
         # state embedding
         state = self.drop(self.emb_state(seq))
