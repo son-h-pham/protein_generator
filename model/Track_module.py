@@ -25,17 +25,25 @@ class SeqSep(nn.Module):
         self.emb = nn.Embedding(self.nbin, d_model)
         self.drop = nn.Dropout(p_drop)
         
-    def forward(self, x, idx, nc_cycle=False):
-        bins = torch.arange(self.minpos, self.maxpos, device=x.device)
-        seqsep = idx[:,None,:] - idx[:,:,None] # (B, L, L)
-        #
-        B, L = idx.shape[:2]
+    def forward(self, idx, idx2=None, oligo=1, L=0, nc_cycle=False):
+        if idx2 is None:
+            idx2 = idx
+
+        B, L1 = idx.shape[:2]
+        L2 = idx2.shape[1]
+        if L==0:
+            L = L1
+
+        bins = torch.arange(self.minpos, self.maxpos, device=idx.device)
+        seqsep = torch.full((oligo,L1,L2), 100, dtype=idx.dtype, device=idx.device)
+        seqsep[0] = idx2[:,None,:] - idx[:,:,None] # (B, L, L)
         if nc_cycle:
-            seqsep[0] = (seqsep[0] + L//2)%L - L//2
+            seqsep[0] = (seqsep[0]+L//2)%L-L//2
+
+        #
         ib = torch.bucketize(seqsep, bins).long() # (B, L, L)
         emb = self.emb(ib) #(B, L, L, d_model)
-        x = x + emb # add relative positional encoding
-        return self.drop(x)
+        return self.drop(emb)
 
 
 # Update MSA with biased self-attention. bias from Pair & Str
@@ -345,7 +353,7 @@ class Str2Str(nn.Module):
         return Ri, Ti, state, alpha
 
 class IterBlock(nn.Module):
-    def __init__(self, d_msa=256, d_pair=128,
+    def __init__(self, d_msa=256, d_pair=128,d_rbf=36
                  n_head_msa=8, n_head_pair=4,
                  use_global_attn=False,
                  d_hidden=32, d_hidden_msa=None, p_drop=0.15,
@@ -353,7 +361,7 @@ class IterBlock(nn.Module):
         super(IterBlock, self).__init__()
         if d_hidden_msa == None:
             d_hidden_msa = d_hidden
-        self.pos = SeqSep(d_pair)
+        self.pos = SeqSep(d_rbf)
         self.msa2msa = MSAPairStr2MSA(d_msa=d_msa, d_pair=d_pair,
                                       n_head=n_head_msa,
                                       d_state=SE3_param['l0_out_features'],
@@ -369,8 +377,25 @@ class IterBlock(nn.Module):
                                SE3_param=SE3_param,
                                p_drop=p_drop)
 
+        self.d_rbf = d_rbf
+
     def forward(self, msa, pair, R_in, T_in, xyz, state, idx, use_checkpoint=False, nc_cycle=False):
-        rbf_feat = rbf(torch.cdist(xyz[:,:,1,:], xyz[:,:,1,:]))+self.pos(pair, idx, nc_cycle)
+        B,L = pair.shape[:2]
+
+        STRIDE = L
+
+        xyzfull = xyz.view(1,B*L,3,3)
+        rbf_feat = torch.zeros((B,L,L,self.d_rbf), device=msa.device, dtype=msa.dtype)
+        for i in range((L-1)//STRIDE+1):
+            rows = torch.arange(i*STRIDE, min((i+1)*STRIDE, L), device=msa.device)
+            for j in range((L-1)//STRIDE+1):
+                cols = torch.arange(j*STRIDE, min((j+1)*STRIDE, L), device=msa.device)
+                NR, NC = rows.shape[0], cols.shape[0]
+                rbf_feat_ij = (
+                  rbf(torch.cdist(xyz[:,rows,1], xyz[:,cols,1])).reshape(B,NR,NC,-1)
+                  + self.pos(idx[:,rows],idx[:,cols],B,L, nc_cycle)
+                ).to(rbf_feat.dtype)
+                rbf_feat[:,rows[:,None],cols[None,:]] = rbf_feat_ij
         if use_checkpoint:
             msa = checkpoint.checkpoint(create_custom_forward(self.msa2msa), msa, pair, rbf_feat, state)
             pair = checkpoint.checkpoint(create_custom_forward(self.msa2pair), msa, pair)
